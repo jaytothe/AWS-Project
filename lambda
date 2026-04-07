@@ -1,0 +1,47 @@
+import json
+import boto3
+from datetime import datetime
+import urllib3
+
+# Initialize resources
+dynamodb = boto3.resource('dynamodb')
+table = dynamodb.Table('MarketTrackerData')
+sns = boto3.client('sns')
+topic_arn = 'YOUR_ARN_HERE' # <--- MAKE SURE TO UPDATE THIS
+
+def lambda_handler(event, context):
+    symbol = "SPY"
+    http = urllib3.PoolManager()
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=1d"
+    
+    try:
+        response = http.request('GET', url, headers={'User-Agent': 'Mozilla/5.0'})
+        data = json.loads(response.data.decode('utf-8'))
+        
+        result = data['chart']['result'][0]
+        price = result['indicators']['quote'][0]['close'][0]
+        volume = result['indicators']['quote'][0]['volume'][0]
+        timestamp = datetime.now().strftime('%Y-%m-%d')
+
+        # Save to Database
+        table.put_item(
+            Item={
+                'Date': timestamp,
+                'Asset': symbol,
+                'Price': str(round(price, 2)),
+                'Volume': str(volume)
+            }
+        )
+        
+        # Send Email Notification
+        sns.publish(
+            TopicArn=topic_arn,
+            Message=f"SPY Update: ${round(price, 2)}",
+            Subject="Daily Market Tracker"
+        )
+        
+        return {'statusCode': 200, 'body': "Success!"}
+        
+    except Exception as e:
+        print(f"Error: {e}")
+        return {'statusCode': 500, 'body': "Error"}
